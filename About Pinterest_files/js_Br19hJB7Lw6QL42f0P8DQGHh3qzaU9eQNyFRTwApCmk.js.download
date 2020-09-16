@@ -1,0 +1,419 @@
+/**
+ * @file
+ * EU Cookiebar handling
+ */
+
+/**
+ * @file
+ * Alerts script.
+ */
+
+(function cookiebarScript($, Drupal) {
+  'use strict';
+
+  var cookieBarSettings = {
+    'pin_blocks_eu_cookie_bar': {
+      'active': true,
+      'eu_countries': [
+        'AT',
+        'BE',
+        'BG',
+        'CH',
+        'CY',
+        'CZ',
+        'DE',
+        'DK',
+        'EE',
+        'ES',
+        'FI',
+        'FR',
+        'GB',
+        'GR',
+        'HR',
+        'HU',
+        'IE',
+        'IS',
+        'IT',
+        'LI',
+        'LT',
+        'LU',
+        'LV',
+        'MT',
+        'NL',
+        'NO',
+        'PL',
+        'PT',
+        'RO',
+        'SE',
+        'SI',
+        'SK'
+      ]
+    }
+  };
+
+  Drupal.behaviors.checkCountry = {
+    attach: function (context) {
+
+      var eu_country_codes = [];
+      var client_country;
+      var cookiebar_active = false;
+
+      if (cookieBarSettings.pin_blocks_eu_cookie_bar) {
+        if (cookieBarSettings.pin_blocks_eu_cookie_bar.eu_countries) {
+          eu_country_codes = cookieBarSettings.pin_blocks_eu_cookie_bar.eu_countries;
+        }
+        if (cookieBarSettings.pin_blocks_eu_cookie_bar.active) {
+          cookiebar_active = cookieBarSettings.pin_blocks_eu_cookie_bar.active;
+        }
+      }
+      if ('cookie' in $) {
+        client_country = $.cookie('_ss_country_code');
+      }
+      // If our client_country is in the EU, remove the disabling.
+      if (cookiebar_active && client_country && eu_country_codes.indexOf(client_country.toUpperCase()) !== -1) {
+        $('.alerts--eu-cookie-bar').removeClass('alerts--disabled');
+      }
+    }
+  };
+
+}(jQuery, Drupal));
+
+
+(function alertsScript($, Drupal) {
+  'use strict';
+
+  /**
+   * Extract the tracker cookie name and value for the container element.
+   *
+   * TODO: Assumes only 1 tracker withing the container.
+   *
+   * @param {Object} $container
+   *   The container jQuery object.
+   *
+   * @return {Object}
+   *   An object with the following for the first tracker found:
+   *   'name': The name of the cookie.
+   *   'value': The current value of the cookie, null if not set.
+   */
+  var getAlertsTrackerCookie = function ($container) {
+    var cookie = {
+      name: '',
+      value: null
+    };
+
+    if ('cookie' in $) {
+      $('[data-alert-tracker-id]', $container).first().each(function () {
+        var $t = $(this);
+        cookie.name = 'pinAlert' + $t.data('alertTrackerId');
+
+        var cookieValue = $.cookie(cookie.name);
+        if (typeof cookieValue !== 'undefined') {
+          cookie.value = cookieValue;
+        }
+
+        return false;
+      });
+    }
+
+    return cookie;
+  };
+
+  /**
+   * Set the tracker cookie name and value for the container element.
+   *
+   * TODO: Assumes only 1 tracker withing the container.
+   *
+   * @param {Object} $container
+   *   The container jQuery object.
+   *
+   * @return {Object}
+   *   An object with the following for the first tracker found:
+   *   'name': The name of the cookie.
+   *   'value': The current value of the cookie, null if not set.
+   */
+  var setAlertsTrackerCookie = function ($container) {
+    var cookie = getAlertsTrackerCookie($container);
+    if (cookie.name) {
+      cookie.value = 1;
+      $.cookie(cookie.name, cookie.value, {
+        path: Drupal.settings && Drupal.settings.basePath ? (Drupal.settings.basePath || '/') : '/',
+        expires: 365,
+        secure: true
+      });
+    }
+
+    return cookie;
+  };
+
+  var calculateOffset = function ($container) {
+    // Set offset based on the negative of the current
+    // CSS bottom value plus the height of the alert.
+    var currentBottom = parseInt($container.css('bottom'), 10);
+    var alertHeight = $container.height();
+    var alertOffset = (alertHeight - currentBottom) * -1;
+    return alertOffset;
+  };
+
+  var prepareAlert = function ($container, alertOffset) {
+    $container.css({
+      bottom: alertOffset,
+      display: 'block',
+      visibility: 'visible'
+    });
+    // Check if a cookie is set against it.
+    var cookie = getAlertsTrackerCookie($container);
+    if (cookie.value) {
+      disableAlert($container);
+    }
+  };
+
+  var displayAlert = function ($container, alertOffset) {
+    if ($container.hasClass('alerts--active')) {
+      var $window = $(window);
+      var $document = $(document);
+      var displayHeight = $.type($container.data('alertDisplayHeight')) !== 'undefined' ? $container.data('alertDisplayHeight') : $window.height();
+      var scrollPosition = $document.scrollTop();
+      if (scrollPosition >= displayHeight) {
+        // We add an amination class here to set transition in CSS
+        // and avoid an animating alerts box on initial page load.
+        $container.addClass('alerts--anim').css('bottom', 0);
+      }
+      else {
+        $container.css('bottom', alertOffset);
+      }
+    }
+  };
+
+  var dismissAlert = function ($container, alertOffset, $alerts) {
+    $container
+      .css('bottom', alertOffset)
+      .delay(700).hide(0);
+    setAlertsTrackerCookie($container);
+    disableAlert($container);
+    activateNextAlert($alerts);
+  };
+
+  var disableAlert = function ($container) {
+    $container.addClass('alerts--disabled');
+    $container.removeClass('alerts--active');
+  };
+
+  var activateAlert = function ($container) {
+    $container.addClass('alerts--active');
+  };
+
+  var activateNextAlert = function ($alerts) {
+    // Find the first alert not disabled and activate it.
+    $alerts.not('.alerts--disabled').first().each(function () {
+      var $container = $(this);
+      activateAlert($container);
+    });
+  };
+
+  var debounceAlertsEvent =  function (callback, wait) {
+
+    "use strict";
+
+    var timeout, result;
+    return function () {
+      var context = this;
+      var args = arguments;
+      var later = function () {
+        timeout = null;
+        result = callback.apply(context, args);
+      };
+      window.clearTimeout(timeout);
+      timeout = window.setTimeout(later, wait);
+      return result;
+    };
+  };
+
+
+  /*
+   * Alerts behaviors.
+   */
+  Drupal.behaviors.alertsSlide = {
+    attach: function (context) {
+      var $alerts = $('.alerts, .notification');
+      $alerts.each(function (index) {
+        var $container = $(this);
+        var alertOffset = calculateOffset($container);
+        prepareAlert($container, alertOffset);
+        // Slide up/down the alert based on scroll position in the viewport.
+        $(window).on('scroll', debounceAlertsEvent(function () {
+          displayAlert($container, alertOffset);
+        }, 15));
+        // Set an event to dismiss the alert.
+        $container.find('.js-alerts__close-button').click(function () {
+          dismissAlert($container, alertOffset, $alerts);
+        });
+      });
+      activateNextAlert($alerts);
+      // Trigger the scroll event.
+      $(window).scroll();
+    }
+  };
+
+}(jQuery, Drupal));
+;
+/**
+ * Created by sorin1 on 12/3/15.
+ */
+(function ($) {
+
+  Drupal.behaviors.securePage = {
+    attach: function (context) {
+
+      if (typeof Drupal.settings.securedpaths != 'undefined' && Drupal.settings.currentUser == 0) {
+        var securedPaths = Drupal.settings.securedpaths,
+            currentPath = window.location.pathname.trim(),
+        newCurrentPath = currentPath.replace(Drupal.settings.pathPrefix, "").replace(/\/+/g, "/").toLowerCase();
+
+        securedPaths = securedPaths.map(function (str) {
+          return str.trim().toLowerCase();
+        });
+
+        var match = securedPaths.indexOf(newCurrentPath);
+        if (match != -1) {
+          window.location.href = location.origin + Drupal.settings.basePath + Drupal.settings.pathPrefix + 'login?next=' + newCurrentPath;
+        }
+      }
+    }
+  }
+
+})(jQuery);
+;
+(function ($) {
+  var docCookies = {
+    getItem: function (sKey) {
+      if (!sKey) { return null; }
+      return decodeURIComponent(document.cookie.replace(new RegExp("(?:(?:^|.*;)\\s*" + encodeURIComponent(sKey).replace(/[\-\.\+\*]/g, "\\$&") + "\\s*\\=\\s*([^;]*).*$)|^.*$"), "$1")) || null;
+    },
+    setItem: function (sKey, sValue, vEnd, sPath, sDomain, bSecure) {
+      if (!sKey || /^(?:expires|max\-age|path|domain|secure)$/i.test(sKey)) { return false; }
+      var sExpires = "";
+      if (vEnd) {
+        switch (vEnd.constructor) {
+          case Number:
+            sExpires = vEnd === Infinity ? "; expires=Fri, 31 Dec 9999 23:59:59 GMT" : "; max-age=" + vEnd;
+            break;
+          case String:
+            sExpires = "; expires=" + vEnd;
+            break;
+          case Date:
+            sExpires = "; expires=" + vEnd.toUTCString();
+            break;
+        }
+      }
+      document.cookie = encodeURIComponent(sKey) + "=" + encodeURIComponent(sValue) + sExpires + (sDomain ? "; domain=" + sDomain : "") + (sPath ? "; path=" + sPath : "") + (bSecure ? "; secure" : "");
+      return true;
+    },
+    removeItem: function (sKey, sPath, sDomain) {
+      if (!this.hasItem(sKey)) { return false; }
+      document.cookie = encodeURIComponent(sKey) + "=; expires=Thu, 01 Jan 1970 00:00:00 GMT" + (sDomain ? "; domain=" + sDomain : "") + (sPath ? "; path=" + sPath : "");
+      return true;
+    },
+    hasItem: function (sKey) {
+      if (!sKey) { return false; }
+      return (new RegExp("(?:^|;\\s*)" + encodeURIComponent(sKey).replace(/[\-\.\+\*]/g, "\\$&") + "\\s*\\=")).test(document.cookie);
+    },
+    keys: function () {
+      var aKeys = document.cookie.replace(/((?:^|\s*;)[^\=]+)(?=;|$)|^\s*|\s*(?:\=[^;]*)?(?:\1|$)/g, "").split(/\s*(?:\=[^;]*)?;\s*/);
+      for (var nLen = aKeys.length, nIdx = 0; nIdx < nLen; nIdx++) { aKeys[nIdx] = decodeURIComponent(aKeys[nIdx]); }
+      return aKeys;
+    }
+  };
+
+  /* This function checks if there is a pinterest_autologin_attempted cookie set. If so, it will not attempt
+     an auto-login. If there is no cookie set, it will set the cookie (they last 24 hours) and then attempt
+     an auto-login.
+  */
+  Drupal.behaviors.checkCookie = {
+    attach: function (context) {
+
+      if (typeof Drupal.settings.autologin != 'undefined' &&  Drupal.settings.autologin.autologin_setting == 1 && !docCookies.hasItem("pinterest_autologin_attempt")) {
+        //See if we've already tries to autologin
+
+            var now = new Date();
+            var time = now.getTime();
+            var expireTime = time + 1000 * 36000;
+            now.setTime(expireTime);
+            docCookies.setItem("pinterest_autologin_attempt", "true", now, "/");
+            if (Drupal.settings.currentUser == 0) {
+              if (undefined != $(".arrow").next().attr('href')) {
+                window.location = window.location.origin + $(".arrow").next().attr('href') + '&autologin=true';
+              }
+            }
+        }
+      }
+  };
+  
+})(jQuery);
+
+;
+/*
+--------------------------------------------------------------------------
+(c) 2007 Lawrence Akka
+ - jquery version of the spamspan code (c) 2006 SpamSpan (www.spamspan.com)
+
+This program is distributed under the terms of the GNU General Public
+Licence version 2, available at http://www.gnu.org/licenses/gpl.txt
+--------------------------------------------------------------------------
+*/
+
+(function ($) { //Standard drupal jQuery wrapper.  See http://drupal.org/update/modules/6/7#javascript_compatibility
+// load SpamSpan
+Drupal.behaviors.spamspan = {
+  attach: function(context, settings) {
+    // get each span with class spamspan
+    $("span.spamspan", context).each(function (index) {
+      // Replace each <spam class="t"></spam> with .
+      if ($('span.t', this).length) {
+        $('span.t', this).replaceWith('.');
+      }
+      
+      // For each selected span, set mail to the relevant value, removing spaces
+      var _mail = ($("span.u", this).text() +
+        "@" +
+        $("span.d", this).text())
+        .replace(/\s+/g, '');
+
+      // Build the mailto URI
+      var _mailto = "mailto:" + _mail;
+      if ($('span.h', this).length) {
+        // Find the header text, and remove the round brackets from the start and end
+        var _headerText = $("span.h", this).text().replace(/^ ?\((.*)\) ?$/, "$1");
+        // split into individual headers, and return as an array of header=value pairs
+        var _headers = $.map(_headerText.split(/, /), function (n, i) {
+          return (n.replace(/: /, "="));
+        });
+
+        var _headerstring = _headers.join('&');
+        _mailto += _headerstring ? ("?" + _headerstring) : '';
+      }
+
+      // Find the anchor content, and remove the round brackets from the start and end
+      var _anchorContent = $("span.a", this).html();
+      if (_anchorContent) {
+        _anchorContent = _anchorContent.replace(/^ ?\((.*)\) ?$/, "$1");
+      }
+
+      // create the <a> element, and replace the original span contents
+
+      //check for extra <a> attributes
+      var _attributes = $("span.e", this).html();
+      var _tag = "<a></a>";
+      if (_attributes) {
+        _tag = "<a " + _attributes.replace("<!--", "").replace("-->", "") + "></a>";
+      }
+
+      $(this).after(
+        $(_tag)
+          .attr("href", _mailto)
+          .html(_anchorContent ? _anchorContent : _mail)
+          .addClass("spamspan")
+      ).remove();
+    });
+  }
+};
+}) (jQuery);;
